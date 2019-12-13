@@ -1,0 +1,46 @@
+CAPI=1
+[main]
+name = ::av_bfm:1.0
+description = Avalon BFM
+depend = av_common
+simulators = icarus isim modelsim
+
+[fileset rtl_files]
+files =
+ av_bfm_master.v
+ av_bfm_slave.v
+ av_bfm_memory.v
+ av_bfm_transactor.v
+file_type = verilogSource
+
+[fileset tb]
+files =
+ bench/av_bfm_tb.v
+file_type = verilogSource
+scope = private
+usage = sim
+
+[parameter transactions]
+datatype    = int
+description = Number of test bench transactions
+paramtype   = plusarg
+scope       = private
+
+[parameter subtransactions]
+datatype    = int
+description = Number of test subtransactions to run
+paramtype   = plusarg
+scope       = private
+
+[simulator]
+toplevel = av_bfm_tb
+
+[icarus]
+depend = >=vlog_tb_utils-1.1
+
+[isim]
+depend = >=vlog_tb_utils-1.1
+isim_options = -d BROKEN_CLOG2
+
+[modelsim]
+depend = >=vlog_tb_utils-1.1
