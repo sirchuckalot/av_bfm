@@ -58,10 +58,10 @@ module av_bfm_slave
 
    task init;
         begin
-            av_waitrequest_o <= #Tp 1'b1;
+            av_waitrequest_o   <= #Tp 1'b1;
             av_readdatavalid_o <= #Tp 1'b0;
-            av_readdata_o <= #Tp {dw{1'b0}};
-            av_response_o <= #Tp RESPONSE_OKAY;
+            av_readdata_o      <= #Tp {dw{1'b0}};
+            av_response_o      <= #Tp RESPONSE_OKAY;
 
             if(av_rst_i !== 1'b0) begin
                 if(DEBUG) $display("%0d : waiting for reset release", $time);
@@ -78,17 +78,17 @@ module av_bfm_slave
             //Make sure that av_cyc is still asserted at next clock edge to avoid glitches
             while(av_cyc !== 1'b1)
                 @(posedge av_clk_i);
-            if(DEBUG) $display("%0d : Got av_cyc", $time);
+            if(DEBUG) $display("%0d : Got av_cyc, burstcount = %x", $time, av_burstcount_i);
 
-            //cycle_type = get_cycle_type(av_cti_i);
-            cycle_type = (|av_burstcount_i) ? BURST_CYCLE : CLASSIC_CYCLE;
+            cycle_type = get_cycle_type(av_burstcount_i);
+            //cycle_type = (av_burstcount_i > 0) ? BURST_CYCLE : CLASSIC_CYCLE;
 
-            op         = av_write_i ? WRITE : READ;
-            address    = av_address_i;
-            mask       = av_byteenable_i;
-            count      = av_burstcount_i;
+            op                  = av_write_i ? WRITE : READ;
+            address             = av_address_i;
+            mask                = av_byteenable_i;
+            count               = av_burstcount_i;
 
-            has_next = 1'b1;
+            has_next            = 1'b1;
         end
    endtask
 
@@ -122,9 +122,9 @@ module av_bfm_slave
         begin
             if(DEBUG) $display("%0d : next address=0x%h, data=0x%h, op=%b", $time, address, data, op);
 
-            av_readdata_o    <= #Tp {dw{1'b0}};
-            av_waitrequest_o <= #Tp 1'b1;
-            av_response_o    <= #Tp RESPONSE_OKAY;
+            av_readdata_o      <= #Tp {dw{1'b0}};
+            av_waitrequest_o   <= #Tp 1'b1;
+            av_response_o      <= #Tp RESPONSE_OKAY;
 
             if(err) begin
                 if(DEBUG) $display("%0d, Error", $time);
@@ -134,24 +134,41 @@ module av_bfm_slave
                 if(op === READ) begin
                     av_readdata_o      <= #Tp data;
                     av_readdatavalid_o <= #Tp 1'b1;
+                    //av_response_o      <= #Tp RESPONSE_OKAY;
                 end
                 av_waitrequest_o <= #Tp 1'b0;
             end
 
             @(posedge av_clk_i);
 
-            av_waitrequest_o <= #Tp 1'b1;
+            av_waitrequest_o   <= #Tp 1'b1;
             av_readdatavalid_o <= #Tp 1'b0;
-            av_response_o <= #Tp RESPONSE_OKAY;
+            av_response_o      <= #Tp RESPONSE_OKAY;
 
-            //has_next = !av_is_last(av_cti_i) & !err;
+            //has_next = !av_is_last(count) & !err;
             has_next = (count > 1) & !err;
+            //has_next = !(count <= 1) & !err;
 
+            // Per the Avalon spec, during bursts the master write signal indicates valid writedata
+            if ((cycle_type === BURST_CYCLE) & (op === WRITE)) begin
+                if (!av_write_i) begin
+                    while (!av_write_i) begin
+                        if(DEBUG) $display("%0d : Master stalled burst write, waiting for write signal", $time);
+                        @(posedge av_clk_i);
+                    end
+                    if (DEBUG) $display("%0d : Master burst write signal asserted", $time);
+                end
+            end
+
+            // Now we can capture write data
             if(op === WRITE) begin
                 data = av_writedata_i;
                 mask = av_byteenable_i;
             end
+
             address = av_address_i;
+
+            // If bursting, we don't want to wrap around loop
             if (count > 0)
                 count = count - 1;
         end
