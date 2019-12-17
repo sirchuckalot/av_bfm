@@ -117,61 +117,89 @@ module av_bfm_slave
         end
    endtask
 
-
    task next;
         begin
             if(DEBUG) $display("%0d : next address=0x%h, data=0x%h, op=%b", $time, address, data, op);
 
-            av_readdata_o      <= #Tp {dw{1'b0}};
-            av_waitrequest_o   <= #Tp 1'b1;
-            av_response_o      <= #Tp RESPONSE_OKAY;
-
-            if(err) begin
+            // First check if we need to send error response
+            if (err) begin
                 if(DEBUG) $display("%0d, Error", $time);
+
+                // We can't continue and must abort cycle request
                 av_response_o <= #Tp RESPONSE_SLAVEERROR;
+                av_waitrequest_o   <= #Tp 1'b1;
+                av_readdatavalid_o <= #Tp 1'b0;
+
+                // Gracefully, complete has next counter
                 has_next       = 1'b0;
-            end else begin
-                if(op === READ) begin
-                    av_readdata_o      <= #Tp data;
-                    av_readdatavalid_o <= #Tp 1'b1;
-                    //av_response_o      <= #Tp RESPONSE_OKAY;
+                count          = 0;
+            end else
+
+            // If not error, then we should check for read
+            if(op === READ) begin
+                av_response_o      <= #Tp RESPONSE_OKAY;
+                av_readdata_o      <= #Tp data;
+                av_waitrequest_o   <= #Tp 1'b0;
+                av_readdatavalid_o <= #Tp 1'b1;
+            end else
+
+            // If not error or read, then we should check for write
+            if (op === WRITE) begin
+                // Per the Avalon spec, during bursts the master write signal indicates valid writedata
+                if (cycle_type === BURST_CYCLE) begin
+                    if (!av_write_i) begin
+                        if(DEBUG) $display("%0d : Master stalled burst write, waiting for write signal", $time);
+                        av_response_o      <= #Tp RESPONSE_OKAY;
+                        av_waitrequest_o   <= #Tp 1'b1;
+                        av_readdatavalid_o <= #Tp 1'b0;
+                    end else begin
+                        if (DEBUG) $display("%0d : Master burst write signal asserted", $time);
+                        av_response_o      <= #Tp RESPONSE_OKAY;
+                        av_waitrequest_o   <= #Tp 1'b0;
+                        av_readdatavalid_o <= #Tp 1'b0;
+                    end
+
+                // Only write condition left is single cycle
+                end else begin
+                    av_response_o      <= #Tp RESPONSE_OKAY;
+                    av_waitrequest_o   <= #Tp 1'b0;
+                    av_readdatavalid_o <= #Tp 1'b0;
                 end
-                av_waitrequest_o <= #Tp 1'b0;
             end
 
+            // We can now release response back to master at next posedge clock
             @(posedge av_clk_i);
 
-            av_waitrequest_o   <= #Tp 1'b1;
-            av_readdatavalid_o <= #Tp 1'b0;
-            av_response_o      <= #Tp RESPONSE_OKAY;
-
-            //has_next = !av_is_last(count) & !err;
-            has_next = (count > 1) & !err;
-            //has_next = !(count <= 1) & !err;
-
-            // Per the Avalon spec, during bursts the master write signal indicates valid writedata
-            if ((cycle_type === BURST_CYCLE) & (op === WRITE)) begin
-                if (!av_write_i) begin
-                    while (!av_write_i) begin
-                        if(DEBUG) $display("%0d : Master stalled burst write, waiting for write signal", $time);
-                        @(posedge av_clk_i);
-                    end
-                    if (DEBUG) $display("%0d : Master burst write signal asserted", $time);
-                end
-            end
-
             // Now we can capture write data
-            if(op === WRITE) begin
-                data = av_writedata_i;
-                mask = av_byteenable_i;
-            end
-
+            data = av_writedata_i;
+            mask = av_byteenable_i;
             address = av_address_i;
 
-            // If bursting, we don't want to wrap around loop
-            if (count > 0)
-                count = count - 1;
+            // Should we do it again?
+            has_next = (count > 1) & !err;
+            
+            // Read with no error response counts down
+            if ((op === READ) & !err) begin
+                if (count > 0)
+                    count = count - 1;
+            end else
+            // Write with no error response and no burst counts down
+            if ( (op === WRITE) & (cycle_type === CLASSIC_CYCLE) & !err ) begin
+                if (count > 0)
+                    count = count - 1;
+            end else
+            // Write with burst, no master stall and no error counts down 
+            if ( (op === WRITE) & (cycle_type === BURST_CYCLE) &  (av_write_i) & !err) begin
+                if (count > 0)
+                    count = count - 1;
+            end
+
+            // We always end task with normal, ready response
+            av_response_o      <= #Tp RESPONSE_OKAY;
+            av_waitrequest_o   <= #Tp 1'b0;
+            av_readdatavalid_o <= #Tp 1'b0;
         end
+
    endtask
 
 endmodule
