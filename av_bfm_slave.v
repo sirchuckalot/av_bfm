@@ -58,7 +58,7 @@ module av_bfm_slave
 
    task init;
         begin
-            av_waitrequest_o   <= #Tp 1'b1;
+            av_waitrequest_o   <= #Tp 1'b0;
             av_readdatavalid_o <= #Tp 1'b0;
             av_readdata_o      <= #Tp {dw{1'b0}};
             av_response_o      <= #Tp RESPONSE_OKAY;
@@ -70,12 +70,19 @@ module av_bfm_slave
                 if(DEBUG) $display("%0d : Reset was released", $time);
              end
 
-            //Catch start of next cycle
+            // Catch start of next cycle
             if (!av_cyc)
                 @(posedge av_cyc);
+
+            // Raise waitrequest after request detected
+            // NOTE: This should be checked to see if this necessary for Avalon spec
+            //       If this not, then we remove one extra clock cycle
+            av_waitrequest_o   <= #Tp 1'b1;
+
+            // Move to next posedge clock
             @(posedge av_clk_i);
 
-            //Make sure that av_cyc is still asserted at next clock edge to avoid glitches
+            // Make sure that av_cyc is still asserted at next clock edge to avoid glitches
             while(av_cyc !== 1'b1)
                 @(posedge av_clk_i);
             if(DEBUG) $display("%0d : Got av_cyc, burstcount = %x", $time, av_burstcount_i);
@@ -159,13 +166,16 @@ module av_bfm_slave
                         av_readdatavalid_o <= #Tp 1'b0;
                     end
 
-                // Only write condition left is single cycle
+                // Only condition left is single cycle write
                 end else begin
                     av_response_o      <= #Tp RESPONSE_OKAY;
                     av_waitrequest_o   <= #Tp 1'b0;
                     av_readdatavalid_o <= #Tp 1'b0;
                 end
             end
+
+            // Should we do it again?
+            has_next = (count > 0) & !err;
 
             // We can now release response back to master at next posedge clock
             @(posedge av_clk_i);
@@ -175,9 +185,6 @@ module av_bfm_slave
             mask = av_byteenable_i;
             address = av_address_i;
 
-            // Should we do it again?
-            has_next = (count > 1) & !err;
-            
             // Read with no error response counts down
             if ((op === READ) & !err) begin
                 if (count > 0)
@@ -198,6 +205,13 @@ module av_bfm_slave
             av_response_o      <= #Tp RESPONSE_OKAY;
             av_waitrequest_o   <= #Tp 1'b0;
             av_readdatavalid_o <= #Tp 1'b0;
+
+            // Allow one more cycle for single cycle
+            if (cycle_type === CLASSIC_CYCLE)
+                @(posedge av_clk_i);
+
+            // We need to know when task has completed for debugging purposes
+            if (DEBUG) $display("%0d : End of Task", $time);
         end
 
    endtask
