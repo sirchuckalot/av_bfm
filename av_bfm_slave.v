@@ -58,14 +58,19 @@ module av_bfm_slave
 
    task init;
         begin
-            av_waitrequest_o   <= #Tp 1'b0;
+            if (av_rst_i === 1'b0)
+                av_waitrequest_o   <= #Tp 1'b0;
             av_readdatavalid_o <= #Tp 1'b0;
             av_readdata_o      <= #Tp {dw{1'b0}};
             av_response_o      <= #Tp RESPONSE_OKAY;
 
+            // To avoid system lockup, a slave device should assert
+            // waitrequest when in reset.
             if(av_rst_i !== 1'b0) begin
                 if(DEBUG) $display("%0d : waiting for reset release", $time);
+                av_waitrequest_o = 1'b1;
                 @(negedge av_rst_i);
+                av_waitrequest_o = 1'b0;
                 @(posedge av_clk_i);
                 if(DEBUG) $display("%0d : Reset was released", $time);
              end
